@@ -37,6 +37,15 @@ pub struct ProcInfo {
 }
 
 #[derive(Debug, Clone)]
+pub struct NetIface {
+    pub name: String,
+    pub rx_rate: u64,
+    pub tx_rate: u64,
+    pub rx_total: u64,
+    pub tx_total: u64,
+}
+
+#[derive(Debug, Clone)]
 pub struct DiskInfo {
     pub name: String,
     pub mount: String,
@@ -60,6 +69,7 @@ pub struct Snapshot {
     pub tx_rate: u64,
     pub rx_total: u64,
     pub tx_total: u64,
+    pub ifaces: Vec<NetIface>,
     pub disks: Vec<DiskInfo>,
     pub procs: Vec<ProcInfo>,
     pub n_running: usize,
@@ -175,28 +185,34 @@ fn run(mut sys: System, mut interval: Duration, out: Sender<Snapshot>, cmds: Rec
         sys.refresh_memory();
         sys.refresh_processes_specifics(ProcessesToUpdate::All, true, proc_kind);
 
-        let (rx_rate, tx_rate, rx_total, tx_total) = match networks.as_mut() {
-            Some(n) => {
-                n.refresh(true);
-                let mut rx = 0u64;
-                let mut tx = 0u64;
-                let mut rxt = 0u64;
-                let mut txt = 0u64;
-                for (_, data) in &*n {
-                    rx += data.received();
-                    tx += data.transmitted();
-                    rxt += data.total_received();
-                    txt += data.total_transmitted();
+        let mut ifaces: Vec<NetIface> = Vec::new();
+        if let Some(n) = networks.as_mut() {
+            n.refresh(true);
+            for (name, data) in &*n {
+                // Skip interfaces that have never carried traffic (macOS has
+                // dozens of idle utun/awdl/llw devices).
+                if data.total_received() == 0 && data.total_transmitted() == 0 {
+                    continue;
                 }
-                (
-                    (rx as f64 / elapsed) as u64,
-                    (tx as f64 / elapsed) as u64,
-                    rxt,
-                    txt,
-                )
+                ifaces.push(NetIface {
+                    name: name.to_string_lossy().into_owned(),
+                    rx_rate: (data.received() as f64 / elapsed) as u64,
+                    tx_rate: (data.transmitted() as f64 / elapsed) as u64,
+                    rx_total: data.total_received(),
+                    tx_total: data.total_transmitted(),
+                });
             }
-            None => (0, 0, 0, 0),
-        };
+        }
+        // Busiest first, then alphabetical so idle interfaces keep a stable order.
+        ifaces.sort_by(|a, b| {
+            (b.rx_rate + b.tx_rate)
+                .cmp(&(a.rx_rate + a.tx_rate))
+                .then_with(|| a.name.cmp(&b.name))
+        });
+        let rx_rate = ifaces.iter().map(|i| i.rx_rate).sum();
+        let tx_rate = ifaces.iter().map(|i| i.tx_rate).sum();
+        let rx_total = ifaces.iter().map(|i| i.rx_total).sum();
+        let tx_total = ifaces.iter().map(|i| i.tx_total).sum();
 
         let disk_list = match disks.as_mut() {
             Some(d) => {
@@ -279,6 +295,7 @@ fn run(mut sys: System, mut interval: Duration, out: Sender<Snapshot>, cmds: Rec
             tx_rate,
             rx_total,
             tx_total,
+            ifaces,
             disks: disk_list,
             procs,
             n_running,

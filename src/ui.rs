@@ -277,16 +277,23 @@ fn draw_mem(frame: &mut Frame, app: &App, area: Rect) {
 
 fn draw_net(frame: &mut Frame, app: &App, area: Rect) {
     let s = &app.snap;
+    let hint = if app.show_ifaces { "graphs" } else { "ifaces" };
     let b = block(Line::from(vec![
         " Network ".fg(ACCENT).bold(),
         format!("↓ {}", fmt_rate(s.rx_rate)).fg(RX),
         "  ".into(),
         format!("↑ {}", fmt_rate(s.tx_rate)).fg(TX),
+        "  ".into(),
+        format!("i:{hint}").fg(DIM),
         " ".into(),
     ]));
     let inner = b.inner(area);
     frame.render_widget(b, area);
     if inner.height < 2 {
+        return;
+    }
+    if app.show_ifaces {
+        draw_ifaces(frame, app, inner);
         return;
     }
     let [rx_a, tx_a] =
@@ -320,6 +327,82 @@ fn draw_net(frame: &mut Frame, app: &App, area: Rect) {
             );
         }
     }
+}
+
+/// One row per interface: name, current rates and (when wide enough) totals.
+fn draw_ifaces(frame: &mut Frame, app: &App, area: Rect) {
+    let s = &app.snap;
+    let wide = area.width >= 52;
+    let header_style = Style::new().fg(ACCENT).add_modifier(Modifier::BOLD);
+    let mut header = vec![
+        Cell::from("IFACE").style(header_style),
+        Cell::from("↓ rate").style(header_style.fg(RX)),
+        Cell::from("↑ rate").style(header_style.fg(TX)),
+    ];
+    let mut widths = vec![
+        Constraint::Min(5),
+        Constraint::Length(9),
+        Constraint::Length(9),
+    ];
+    if wide {
+        header.push(Cell::from("↓ total").style(header_style.fg(RX)));
+        header.push(Cell::from("↑ total").style(header_style.fg(TX)));
+        widths.push(Constraint::Length(8));
+        widths.push(Constraint::Length(8));
+    }
+    // Share of the busiest interface drives the colour so the hot link stands out.
+    let busiest = s
+        .ifaces
+        .iter()
+        .map(|i| i.rx_rate + i.tx_rate)
+        .max()
+        .unwrap_or(0)
+        .max(1);
+    let rows: Vec<Row> = s
+        .ifaces
+        .iter()
+        .take(area.height.saturating_sub(1) as usize)
+        .map(|i| {
+            let share = (i.rx_rate + i.tx_rate) as f64 / busiest as f64 * 100.0;
+            let active = i.rx_rate + i.tx_rate > 0;
+            let name_style = if active {
+                Style::new().fg(heat(share)).add_modifier(Modifier::BOLD)
+            } else {
+                Style::new().fg(DIM)
+            };
+            let rate_style = |c: Color| {
+                if active {
+                    Style::new().fg(c)
+                } else {
+                    Style::new().fg(DIM)
+                }
+            };
+            let mut cells = vec![
+                Cell::from(i.name.clone()).style(name_style),
+                Cell::from(format!("{:>9}", fmt_rate(i.rx_rate))).style(rate_style(RX)),
+                Cell::from(format!("{:>9}", fmt_rate(i.tx_rate))).style(rate_style(TX)),
+            ];
+            if wide {
+                cells.push(
+                    Cell::from(format!("{:>8}", fmt_bytes(i.rx_total))).style(Style::new().fg(DIM)),
+                );
+                cells.push(
+                    Cell::from(format!("{:>8}", fmt_bytes(i.tx_total))).style(Style::new().fg(DIM)),
+                );
+            }
+            Row::new(cells)
+        })
+        .collect();
+    if rows.is_empty() {
+        frame.render_widget(Paragraph::new("no active interfaces".fg(DIM)), area);
+        return;
+    }
+    frame.render_widget(
+        Table::new(rows, widths)
+            .header(Row::new(header))
+            .column_spacing(1),
+        area,
+    );
 }
 
 fn draw_disks(frame: &mut Frame, app: &App, area: Rect) {
@@ -520,6 +603,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
                 ("r", "reverse"),
                 ("/", "filter"),
                 ("e", "cmd"),
+                ("i", "ifaces"),
                 ("␣", "pause"),
                 ("+ -", "rate"),
                 ("x", "term"),
@@ -567,6 +651,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         ("r", "reverse sort order"),
         ("/", "filter by name, command, user or PID"),
         ("e", "toggle name / full command line"),
+        ("i", "toggle network graphs / per-interface table"),
         ("space", "pause / resume sampling"),
         ("+ / -", "faster / slower refresh (250 ms steps)"),
         ("x / Del", "send SIGTERM to selected process"),

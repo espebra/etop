@@ -26,7 +26,8 @@ Supports Linux and macOS on x86_64 and arm64.
 - CPU history graph (braille, area-filled) plus a per-core bar for every core,
   coloured on a green → yellow → red heat scale
 - Memory and swap gauges with a used-memory history sparkline
-- Network receive / transmit sparklines with peak and total counters
+- Network receive / transmit sparklines with peak and total counters, or a
+  per-interface table of current rates and totals (toggle with `i`)
 - Disk usage gauges per mounted filesystem
 - Process table with CPU, memory, RSS, thread count (Linux), run time and state
 - Sort by CPU, memory, PID, name, user or run time; reverse any sort
@@ -70,6 +71,7 @@ etop [-r <ms>]
 | `r`              | reverse sort order                            |
 | `/`              | filter (Enter to apply, Esc to clear)         |
 | `e`              | toggle process name / full command line       |
+| `i`              | toggle network graphs / per-interface table   |
 | `space`          | pause / resume sampling                       |
 | `+` / `-`        | faster / slower refresh                       |
 | `x` / `Del`      | send SIGTERM to selected process              |

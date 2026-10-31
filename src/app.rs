@@ -55,6 +55,7 @@ pub struct App {
     pub table: TableState,
     pub visible: Vec<ProcInfo>,
     pub show_cmd: bool,
+    pub show_ifaces: bool,
     pub paused: bool,
     pub interval: Duration,
     pub status: Option<(String, std::time::Instant)>,
@@ -82,6 +83,7 @@ impl App {
             table,
             visible: Vec::new(),
             show_cmd: false,
+            show_ifaces: false,
             paused: false,
             interval,
             status: None,
@@ -261,6 +263,7 @@ impl App {
 
             KeyCode::Char('/') => self.mode = Mode::Filter,
             KeyCode::Char('e') => self.show_cmd = !self.show_cmd,
+            KeyCode::Char('i') => self.show_ifaces = !self.show_ifaces,
             KeyCode::Char(' ') => {
                 self.paused = !self.paused;
                 let msg = if self.paused { "Paused" } else { "Resumed" };
