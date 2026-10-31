@@ -1,0 +1,50 @@
+[package]
+name = "etop"
+version = "0.1.0"
+edition = "2024"
+authors = ["Espen Braastad <espen@varnish-software.com>"]
+description = "A visual, cross-platform system monitor for the terminal"
+license = "MIT"
+repository = "https://github.com/espebra/etop"
+homepage = "https://github.com/espebra/etop"
+readme = "README.md"
+keywords = ["top", "htop", "monitor", "tui", "system"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+ratatui = "0.30"
+sysinfo = "0.40"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+# Debian package, built with `cargo deb` (https://crates.io/crates/cargo-deb)
+[package.metadata.deb]
+maintainer = "Espen Braastad <espen@varnish-software.com>"
+copyright = "2026, Espen Braastad"
+extended-description = """\
+etop is a visual alternative to top and htop. It shows CPU history graphs, \
+per-core load bars, memory, swap, network and disk gauges, and a sortable, \
+filterable process table, all in a single small binary."""
+section = "utils"
+priority = "optional"
+depends = ""
+assets = [
+    ["target/release/etop", "usr/bin/", "755"],
+    ["README.md", "usr/share/doc/etop/README", "644"],
+]
+
+# RPM package, built with `cargo generate-rpm` (https://crates.io/crates/cargo-generate-rpm)
+[package.metadata.generate-rpm]
+summary = "A visual, cross-platform system monitor for the terminal"
+license = "MIT"
+url = "https://github.com/espebra/etop"
+assets = [
+    { source = "target/release/etop", dest = "/usr/bin/etop", mode = "755" },
+    { source = "README.md", dest = "/usr/share/doc/etop/README", mode = "644", doc = true },
+    { source = "LICENSE", dest = "/usr/share/licenses/etop/LICENSE", mode = "644" },
+]
