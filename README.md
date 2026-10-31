@@ -6,20 +6,7 @@ graphs and colour of `btop`, in a single small binary.
 Built with [ratatui](https://ratatui.rs) and [sysinfo](https://crates.io/crates/sysinfo).
 Supports Linux and macOS on x86_64 and arm64.
 
-```
- etop  host  macOS 26  Apple M5 arm64 (10c)  up 9d 02:13
-╭ CPU  13.3% · 4.61 GHz · load 2.75 2.79 2.57 ──╮╭ Memory 65.8% ─────────╮╭ Network ↓ 7.8K/s  ↑ 312B/s ─╮
-│100│                        0 ████       44%   ││RAM 21.1G / 32.0G      ││rx peak 731K/s  total 85.1G  │
-│   │                        1 ███▏       35%   ││██████████████66%      ││                          █  │
-│50 │                ⣀⡀      2 █▉         21%   ││Swap 441M / 2.0G       ││tx peak 843B/s  total 70.8G  │
-│0  │               ⢸⣿⡇      3 █▏         12%   ││██████▉       22%      ││                         ▅█▅ │
-╰───────────────────────────────────────────────╯╰───────────────────────╯╰─────────────────────────────╯
-╭ Processes 869 total · 370 running · sort CPU▼ ───────────────────────────────────────────────────────╮
-│  PID     USER       CPU%▼  MEM%   RSS     TIME      S NAME                                           │
-│▶   70930 espen        32.8    1.5    487M  8d 10:41 R iTerm2                                         │
-│    65935 espen        12.6    0.6    192M  1d 03:40 S Firefox GPU Helper                             │
-╰──────────────────────────────────────────────────────────────────────────────────────────────────────╯
-```
+![etop screenshot](docs/screenshot.png)
 
 ## Features
 
@@ -108,6 +95,12 @@ cargo build --release
 cargo deb --no-build
 cargo generate-rpm
 ```
+
+## Screenshot
+
+`docs/screenshot.py` regenerates `docs/screenshot.png` by running the release
+binary in a pseudo-terminal and rasterising the captured screen. It needs
+Python with `pyte` and `pillow`, and the Menlo font, so it is macOS only.
 
 ## License
 
