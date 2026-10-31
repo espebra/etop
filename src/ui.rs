@@ -108,10 +108,19 @@ fn draw_cpu(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         String::new()
     };
+    // Load is coloured relative to core count: green at 0, yellow at half
+    // the cores, red at the core count and above.
+    let cores = app.info.logical_cores.max(1) as f64;
+    let load = |v: f64| format!("{v:.2}").fg(heat(v / cores * 100.0));
     let detail = Line::from(vec![
         format!("{pct:5.1}%").fg(heat(pct)).bold(),
         freq.fg(DIM),
-        format!(" · load {:.2} {:.2} {:.2}", s.load.0, s.load.1, s.load.2).fg(DIM),
+        " · load ".fg(DIM),
+        load(s.load.0),
+        " ".into(),
+        load(s.load.1),
+        " ".into(),
+        load(s.load.2),
     ]);
     let mut t = title("CPU", "");
     t.spans.truncate(3);
