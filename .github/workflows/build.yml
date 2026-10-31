@@ -37,7 +37,9 @@ jobs:
             target: x86_64-unknown-linux-musl
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
-          - os: macos-13
+          # GitHub retired its Intel macOS runners; the x86_64 build is
+          # cross-compiled on Apple Silicon and smoke-tested under Rosetta.
+          - os: macos-latest
             target: x86_64-apple-darwin
           - os: macos-latest
             target: aarch64-apple-darwin
