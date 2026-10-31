@@ -16,13 +16,13 @@ USAGE:
     etop [OPTIONS]
 
 OPTIONS:
-    -r, --rate <MS>    Refresh interval in milliseconds (default 1000, min 250)
+    -r, --rate <MS>    Refresh interval in milliseconds (default 2000, min 250)
     -h, --help         Print this help
     -V, --version      Print version
 ";
 
 fn main() {
-    let mut interval = Duration::from_millis(1000);
+    let mut interval = Duration::from_millis(2000);
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {

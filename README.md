@@ -41,7 +41,7 @@ cargo build --release
 ```
 etop [-r <ms>]
 
-  -r, --rate <MS>   Refresh interval in milliseconds (default 1000, min 250)
+  -r, --rate <MS>   Refresh interval in milliseconds (default 2000, min 250)
   -h, --help        Print help
   -V, --version     Print version
 ```
