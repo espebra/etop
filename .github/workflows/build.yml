@@ -18,7 +18,7 @@ jobs:
     name: fmt + clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -45,7 +45,7 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -62,7 +62,7 @@ jobs:
           mkdir -p dist/$name
           cp target/${{ matrix.target }}/release/etop README.md LICENSE dist/$name/
           tar -C dist -czf dist/$name.tar.gz $name
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: etop-${{ matrix.target }}
           path: dist/*.tar.gz
@@ -82,7 +82,7 @@ jobs:
             arch: arm64
             target: aarch64-unknown-linux-musl
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -107,7 +107,7 @@ jobs:
           sudo apt-get install -y rpm
           rpm -qip dist/*.rpm
           rpm -qlp dist/*.rpm
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: etop-packages-${{ matrix.arch }}
           path: |
@@ -120,13 +120,13 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
       - name: Checksums
         run: cd dist && sha256sum * > SHA256SUMS
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           generate_release_notes: true
