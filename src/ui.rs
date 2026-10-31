@@ -1,11 +1,10 @@
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
-use ratatui::symbols::{self, Marker};
+use ratatui::symbols;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Axis, Block, BorderType, Cell, Chart, Clear, Dataset, Gauge, GraphType, LineGauge, Paragraph,
-    Row, Sparkline, Table,
+    Block, BorderType, Cell, Clear, Gauge, LineGauge, Paragraph, Row, Sparkline, Table,
 };
 
 use crate::app::{App, Mode, SortBy};
@@ -147,32 +146,37 @@ fn draw_cpu(frame: &mut Frame, app: &App, area: Rect) {
     let [chart_area, cores_area] =
         Layout::horizontal([Constraint::Min(16), Constraint::Length(cores_w)]).areas(inner);
 
-    // History chart, right-aligned so the newest sample touches the right edge.
-    let width = (chart_area.width as usize * 2).max(2);
+    // History chart: y-axis labels, axis line, then one bar per column with
+    // the newest sample at the right edge.
+    let [lbl_a, axis_a, bars_a] = Layout::horizontal([
+        Constraint::Length(3),
+        Constraint::Length(1),
+        Constraint::Min(0),
+    ])
+    .areas(chart_area);
+    let rows = chart_area.height as usize;
+    let mut labels = vec![Line::default(); rows];
+    labels[rows - 1] = Line::from("  0".fg(DIM));
+    if rows >= 2 {
+        labels[0] = Line::from("100".fg(DIM));
+    }
+    if rows >= 3 {
+        labels[rows / 2] = Line::from(" 50".fg(DIM));
+    }
+    frame.render_widget(Paragraph::new(labels), lbl_a);
+    frame.render_widget(Paragraph::new(vec![Line::from("│".fg(DIM)); rows]), axis_a);
+    let width = bars_a.width as usize;
     let hist = &app.cpu_hist;
     let start = hist.len().saturating_sub(width);
-    let offset = width.saturating_sub(hist.len());
-    let points: Vec<(f64, f64)> = hist
-        .iter()
-        .skip(start)
-        .enumerate()
-        .map(|(i, v)| ((offset + i) as f64, *v))
+    let pad = width.saturating_sub(hist.len());
+    let values: Vec<Option<u64>> = std::iter::repeat_n(None, pad)
+        .chain(hist.iter().skip(start).map(|v| Some(v.round() as u64)))
         .collect();
-    let ds = Dataset::default()
-        .marker(Marker::Braille)
-        .graph_type(GraphType::Area)
-        .style(Style::new().fg(heat(pct)))
-        .data(&points);
-    let chart = Chart::new(vec![ds])
-        .x_axis(Axis::default().bounds([0.0, width as f64]))
-        .y_axis(
-            Axis::default()
-                .bounds([0.0, 100.0])
-                .labels(["0", "50", "100"])
-                .style(Style::new().fg(DIM)),
-        )
-        .legend_position(None);
-    frame.render_widget(chart, chart_area);
+    let lines: Vec<Line> = eighth_bars(&values, 100, width, rows)
+        .into_iter()
+        .map(|l| Line::from(l.fg(heat(pct))))
+        .collect();
+    frame.render_widget(Paragraph::new(lines), bars_a);
 
     // Per-core bars.
     let per_col = n.div_ceil(cols);
@@ -325,13 +329,13 @@ fn draw_net(frame: &mut Frame, app: &App, area: Rect) {
             lbl,
         );
         if graph.height > 0 {
-            frame.render_widget(
-                Sparkline::default()
-                    .data(tail(hist, graph.width as usize))
-                    .absent_value_symbol(" ")
-                    .style(Style::new().fg(color)),
-                graph,
-            );
+            let values = tail(hist, graph.width as usize);
+            let max = values.iter().flatten().copied().max().unwrap_or(0);
+            let lines = eighth_bars(&values, max, graph.width as usize, graph.height as usize)
+                .into_iter()
+                .map(|l| Line::from(l.fg(color)))
+                .collect::<Vec<_>>();
+            frame.render_widget(Paragraph::new(lines), graph);
         }
     }
 }
@@ -691,6 +695,35 @@ fn centered(area: Rect, w: u16, h: u16) -> Rect {
     }
 }
 
+/// Render `values` as vertical bars one cell wide using the eight-step lower
+/// block characters `▁` to `█`, scaled so `max` reaches the top. Returns one
+/// string per text row, top row first. `None` and zero values leave the
+/// column blank; any other value is at least one eighth of a row tall.
+fn eighth_bars(values: &[Option<u64>], max: u64, cols: usize, rows: usize) -> Vec<String> {
+    const STEPS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let max_steps = rows * 8;
+    let height = |i: usize| -> usize {
+        match values.get(i).copied().flatten() {
+            None | Some(0) => 0,
+            Some(v) => {
+                let h = (v as f64 / max.max(1) as f64 * max_steps as f64).ceil() as usize;
+                h.clamp(1, max_steps)
+            }
+        }
+    };
+    (0..rows)
+        .map(|r| {
+            let below = (rows - 1 - r) * 8;
+            (0..cols)
+                .map(|c| match height(c).saturating_sub(below).min(8) {
+                    0 => ' ',
+                    n => STEPS[n - 1],
+                })
+                .collect()
+        })
+        .collect()
+}
+
 /// Last `width` samples, left-padded with `None` so the series is right-aligned.
 fn tail(hist: &std::collections::VecDeque<u64>, width: usize) -> Vec<Option<u64>> {
     let start = hist.len().saturating_sub(width);
@@ -724,6 +757,34 @@ mod tests {
         assert_eq!(centered(area, 20, 10), Rect::new(50, 40, 20, 10));
         // Larger than the area: shrink to fit instead of overflowing.
         assert_eq!(centered(area, 500, 500), area);
+    }
+
+    #[test]
+    fn eighth_bars_steps_through_all_eight_levels() {
+        let v: Vec<Option<u64>> = (0..=8).map(Some).collect();
+        assert_eq!(eighth_bars(&v, 8, 9, 1), vec![" ▁▂▃▄▅▆▇█"]);
+    }
+
+    #[test]
+    fn eighth_bars_stacks_rows_and_pads_missing() {
+        // Two rows (16 steps), three cells: absent, full, and 10/16.
+        let out = eighth_bars(&[None, Some(16), Some(10)], 16, 3, 2);
+        assert_eq!(out, vec![" █▂", " ██"]);
+        // Short input leaves trailing cells blank; zero rows gives nothing.
+        assert_eq!(eighth_bars(&[Some(1)], 1, 3, 1), vec!["█  "]);
+        assert!(eighth_bars(&[Some(1)], 1, 3, 0).is_empty());
+    }
+
+    #[test]
+    fn eighth_bars_shows_at_least_one_step_for_traffic() {
+        assert_eq!(
+            eighth_bars(&[Some(1), Some(0)], 1_000_000, 2, 2),
+            vec!["  ", "▁ "]
+        );
+        // Zero max does not divide by zero and zero traffic stays blank.
+        assert_eq!(eighth_bars(&[Some(0)], 0, 1, 1), vec![" "]);
+        // Values above max are clamped to a full bar.
+        assert_eq!(eighth_bars(&[Some(500)], 100, 1, 1), vec!["█"]);
     }
 
     #[test]
