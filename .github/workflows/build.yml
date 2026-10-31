@@ -24,6 +24,7 @@ jobs:
           components: clippy, rustfmt
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
 
   binaries:
     name: ${{ matrix.target }}

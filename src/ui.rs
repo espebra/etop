@@ -5,7 +5,7 @@ use ratatui::symbols::{self, Marker};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
     Axis, Block, BorderType, Cell, Chart, Clear, Dataset, Gauge, GraphType, LineGauge, Paragraph,
-    Row, Sparkline, Table, Wrap,
+    Row, Sparkline, Table,
 };
 
 use crate::app::{App, Mode, SortBy};
@@ -65,10 +65,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_procs(frame, app, procs);
     draw_footer(frame, app, footer);
 
-    match &app.mode {
-        Mode::Help => draw_help(frame, area),
-        Mode::ConfirmKill { pid, name, force } => draw_confirm(frame, area, *pid, name, *force),
-        _ => {}
+    if app.mode == Mode::Help {
+        draw_help(frame, area);
     }
 }
 
@@ -615,8 +613,6 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
                 ("i", "ifaces"),
                 ("␣", "pause"),
                 ("+ -", "rate"),
-                ("x", "term"),
-                ("X", "kill"),
                 ("?", "help"),
             ] {
                 spans.extend(key(k, w));
@@ -663,8 +659,6 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         ("i", "toggle network graphs / per-interface table"),
         ("space", "pause / resume sampling"),
         ("+ / -", "faster / slower refresh (250 ms steps)"),
-        ("x / Del", "send SIGTERM to selected process"),
-        ("X / F9", "send SIGKILL to selected process"),
         ("? / F1", "this help"),
     ]
     .into_iter()
@@ -682,30 +676,6 @@ fn draw_help(frame: &mut Frame, area: Rect) {
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(lines).block(block(title("Help", "press any key".fg(DIM)))),
-        popup,
-    );
-}
-
-fn draw_confirm(frame: &mut Frame, area: Rect, pid: u32, name: &str, force: bool) {
-    let sig = if force { "SIGKILL" } else { "SIGTERM" };
-    let text = Line::from(vec![
-        "Send ".into(),
-        sig.fg(Color::Red).bold(),
-        " to ".into(),
-        name.bold(),
-        format!(" ({pid})? ").into(),
-        "y".fg(Color::Green).bold(),
-        "/".fg(DIM),
-        "n".fg(Color::Red).bold(),
-    ]);
-    let w = (text.width() as u16 + 6).min(area.width);
-    let popup = centered(area, w, 3);
-    frame.render_widget(Clear, popup);
-    frame.render_widget(
-        Paragraph::new(text)
-            .alignment(Alignment::Center)
-            .wrap(Wrap { trim: true })
-            .block(block(title("Confirm", "")).border_style(Style::new().fg(Color::Red))),
         popup,
     );
 }
@@ -728,4 +698,43 @@ fn tail(hist: &std::collections::VecDeque<u64>, width: usize) -> Vec<Option<u64>
     std::iter::repeat_n(None, pad)
         .chain(hist.iter().skip(start).map(|v| Some(*v)))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::VecDeque;
+
+    #[test]
+    fn tail_right_aligns_short_history() {
+        let hist: VecDeque<u64> = [1, 2].into();
+        assert_eq!(tail(&hist, 4), vec![None, None, Some(1), Some(2)]);
+    }
+
+    #[test]
+    fn tail_keeps_only_last_width_samples() {
+        let hist: VecDeque<u64> = [1, 2, 3, 4, 5].into();
+        assert_eq!(tail(&hist, 3), vec![Some(3), Some(4), Some(5)]);
+        assert_eq!(tail(&hist, 0), Vec::<Option<u64>>::new());
+    }
+
+    #[test]
+    fn centered_rect_is_centred_and_clamped() {
+        let area = Rect::new(10, 20, 100, 50);
+        assert_eq!(centered(area, 20, 10), Rect::new(50, 40, 20, 10));
+        // Larger than the area: shrink to fit instead of overflowing.
+        assert_eq!(centered(area, 500, 500), area);
+    }
+
+    #[test]
+    fn status_color_highlights_notable_states() {
+        assert_eq!(status_color('R'), Color::Green);
+        assert_eq!(status_color('D'), Color::Yellow);
+        assert_eq!(status_color('T'), Color::Magenta);
+        assert_eq!(status_color('t'), Color::Magenta);
+        assert_eq!(status_color('Z'), Color::Red);
+        assert_eq!(status_color('X'), Color::Red);
+        assert_eq!(status_color('S'), DIM);
+        assert_eq!(status_color('?'), DIM);
+    }
 }

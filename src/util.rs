@@ -112,3 +112,108 @@ pub fn ellipsize(s: &str, max: usize) -> String {
     out.push('…');
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fmt_bytes_picks_unit_and_precision() {
+        assert_eq!(fmt_bytes(0), "0B");
+        assert_eq!(fmt_bytes(1023), "1023B");
+        assert_eq!(fmt_bytes(1024), "1.0K");
+        assert_eq!(fmt_bytes(1536), "1.5K");
+        assert_eq!(fmt_bytes(100 * 1024), "100K");
+        assert_eq!(fmt_bytes(12_300_000_000), "11.5G");
+        assert_eq!(fmt_bytes(u64::MAX), "16384P");
+    }
+
+    #[test]
+    fn fmt_rate_appends_per_second() {
+        assert_eq!(fmt_rate(2048), "2.0K/s");
+    }
+
+    #[test]
+    fn fmt_duration_switches_to_days() {
+        assert_eq!(fmt_duration(0), "00:00:00");
+        assert_eq!(fmt_duration(3661), "01:01:01");
+        assert_eq!(fmt_duration(86_399), "23:59:59");
+        assert_eq!(fmt_duration(86_400), "1d 00:00");
+        assert_eq!(
+            fmt_duration(2 * 86_400 + 3 * 3600 + 4 * 60 + 59),
+            "2d 03:04"
+        );
+    }
+
+    #[test]
+    fn status_code_maps_known_states() {
+        assert_eq!(status_code("Runnable"), 'R');
+        assert_eq!(status_code("Sleeping"), 'S');
+        assert_eq!(status_code("Idle"), 'I');
+        assert_eq!(status_code("Stopped"), 'T');
+        assert_eq!(status_code("Zombie"), 'Z');
+        assert_eq!(status_code("Uninterruptible Disk Sleep"), 'D');
+        assert_eq!(status_code("Dead"), 'X');
+        assert_eq!(status_code("Tracing"), 't');
+        assert_eq!(status_code("Parked"), 'P');
+        assert_eq!(status_code("Waking"), 'W');
+        assert_eq!(status_code("LockBlocked"), 'L');
+        assert_eq!(status_code("Unknown"), '?');
+        assert_eq!(status_code(""), '?');
+    }
+
+    #[test]
+    fn heat_gradient_endpoints_and_clamping() {
+        assert_eq!(heat(0.0), Color::Rgb(60, 220, 140));
+        assert_eq!(heat(50.0), Color::Rgb(240, 200, 40));
+        assert_eq!(heat(100.0), Color::Rgb(250, 70, 70));
+        assert_eq!(heat(-10.0), heat(0.0));
+        assert_eq!(heat(500.0), heat(100.0));
+    }
+
+    #[test]
+    fn heat_gets_redder_as_pct_rises() {
+        let Color::Rgb(_, g_low, _) = heat(10.0) else {
+            panic!()
+        };
+        let Color::Rgb(_, g_high, _) = heat(90.0) else {
+            panic!()
+        };
+        assert!(g_low > g_high);
+    }
+
+    #[test]
+    fn bar_fills_full_cells() {
+        assert_eq!(bar(0.0, 4), "    ");
+        assert_eq!(bar(50.0, 4), "██  ");
+        assert_eq!(bar(100.0, 4), "████");
+        assert_eq!(bar(100.0, 0), "");
+    }
+
+    #[test]
+    fn bar_uses_partial_block_for_remainder() {
+        // 12.5% of 4 cells = half a cell → '▌'.
+        assert_eq!(bar(12.5, 4), "▌   ");
+        // A tiny remainder rounds down to a blank cell.
+        assert_eq!(bar(1.0, 4), "    ");
+    }
+
+    #[test]
+    fn bar_always_has_width_chars() {
+        for pct in [0.0, 3.3, 33.3, 66.6, 99.9, 100.0, 150.0] {
+            for w in 0..6 {
+                assert_eq!(bar(pct, w).chars().count(), w, "pct={pct} w={w}");
+            }
+        }
+    }
+
+    #[test]
+    fn ellipsize_truncates_by_chars() {
+        assert_eq!(ellipsize("hello", 10), "hello");
+        assert_eq!(ellipsize("hello", 5), "hello");
+        assert_eq!(ellipsize("hello", 4), "hel…");
+        assert_eq!(ellipsize("hello", 1), "…");
+        assert_eq!(ellipsize("hello", 0), "");
+        assert_eq!(ellipsize("héllo wörld", 6), "héllo…");
+    }
+}

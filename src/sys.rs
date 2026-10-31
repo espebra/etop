@@ -7,8 +7,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use sysinfo::{
-    Disks, Networks, Pid, ProcessRefreshKind, ProcessesToUpdate, Signal, System, Uid, UpdateKind,
-    Users,
+    Disks, Networks, ProcessRefreshKind, ProcessesToUpdate, System, Uid, UpdateKind, Users,
 };
 
 /// Static facts about the machine, gathered once at startup.
@@ -75,13 +74,10 @@ pub struct Snapshot {
     pub n_running: usize,
     pub n_threads: usize,
     pub sample_ms: u64,
-    pub message: Option<String>,
 }
 
 /// Commands the UI can send to the sampler thread.
 pub enum Command {
-    Kill(u32),
-    Terminate(u32),
     SetInterval(Duration),
     Stop,
 }
@@ -158,7 +154,6 @@ fn run(mut sys: System, mut interval: Duration, out: Sender<Snapshot>, cmds: Rec
         .with_tasks();
 
     let mut last = Instant::now();
-    let mut pending_message: Option<String> = None;
 
     loop {
         // Drain commands first.
@@ -166,12 +161,6 @@ fn run(mut sys: System, mut interval: Duration, out: Sender<Snapshot>, cmds: Rec
             match cmds.try_recv() {
                 Ok(Command::Stop) => return,
                 Ok(Command::SetInterval(d)) => interval = d,
-                Ok(Command::Kill(pid)) => {
-                    pending_message = Some(signal(&sys, pid, Signal::Kill));
-                }
-                Ok(Command::Terminate(pid)) => {
-                    pending_message = Some(signal(&sys, pid, Signal::Term));
-                }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => return,
             }
@@ -301,7 +290,6 @@ fn run(mut sys: System, mut interval: Duration, out: Sender<Snapshot>, cmds: Rec
             n_running,
             n_threads,
             sample_ms: started.elapsed().as_millis() as u64,
-            message: pending_message.take(),
         };
 
         if out.send(snap).is_err() {
@@ -312,18 +300,6 @@ fn run(mut sys: System, mut interval: Duration, out: Sender<Snapshot>, cmds: Rec
         if spent < interval {
             thread::sleep(interval - spent);
         }
-    }
-}
-
-fn signal(sys: &System, pid: u32, sig: Signal) -> String {
-    let Some(p) = sys.process(Pid::from_u32(pid)) else {
-        return format!("PID {pid} no longer exists");
-    };
-    let name = p.name().to_string_lossy().into_owned();
-    match p.kill_with(sig) {
-        Some(true) => format!("Sent {sig:?} to {name} ({pid})"),
-        Some(false) => format!("Failed to signal {name} ({pid}): permission denied?"),
-        None => format!("{sig:?} is not supported on this platform"),
     }
 }
 
@@ -357,4 +333,55 @@ fn collect_disks(disks: &Disks) -> Vec<DiskInfo> {
     }
     out.sort_by(|a, b| a.mount.cmp(&b.mount));
     out
+}
+
+#[cfg(test)]
+impl Sampler {
+    /// Build a sampler with no background thread. Snapshots pushed into the
+    /// returned sender show up in `latest()`, and commands sent via `send()`
+    /// can be read back from the returned receiver.
+    pub fn fake(info: StaticInfo) -> (Self, Sender<Snapshot>, Receiver<Command>) {
+        let (snap_tx, snap_rx) = std::sync::mpsc::channel();
+        let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
+        let sampler = Self {
+            info,
+            rx: snap_rx,
+            tx: cmd_tx,
+        };
+        (sampler, snap_tx, cmd_rx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn latest_returns_newest_and_drains_queue() {
+        let (sampler, tx, _cmds) = Sampler::fake(StaticInfo::default());
+        assert!(sampler.latest().is_none());
+
+        for uptime in 1..=3 {
+            tx.send(Snapshot {
+                uptime,
+                ..Default::default()
+            })
+            .unwrap();
+        }
+        assert_eq!(sampler.latest().unwrap().uptime, 3);
+        assert!(sampler.latest().is_none());
+    }
+
+    #[test]
+    fn send_forwards_commands() {
+        let (sampler, _tx, cmds) = Sampler::fake(StaticInfo::default());
+        sampler.send(Command::SetInterval(Duration::from_millis(750)));
+        sampler.send(Command::Stop);
+        assert!(matches!(
+            cmds.try_recv(),
+            Ok(Command::SetInterval(d)) if d == Duration::from_millis(750)
+        ));
+        assert!(matches!(cmds.try_recv(), Ok(Command::Stop)));
+        assert!(cmds.try_recv().is_err());
+    }
 }

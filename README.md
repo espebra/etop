@@ -19,7 +19,6 @@ Supports Linux and macOS on x86_64 and arm64.
 - Process table with CPU, memory, RSS, thread count (Linux), run time and state
 - Sort by CPU, memory, PID, name, user or run time; reverse any sort
 - Incremental filter over name, command line, user or PID
-- Send SIGTERM or SIGKILL to the selected process, with confirmation
 - Pause sampling, adjust refresh rate at runtime
 - Sampling runs on a background thread so the UI never stalls
 
@@ -61,8 +60,6 @@ etop [-r <ms>]
 | `i`              | toggle network graphs / per-interface table   |
 | `space`          | pause / resume sampling                       |
 | `+` / `-`        | faster / slower refresh                       |
-| `x` / `Del`      | send SIGTERM to selected process              |
-| `X` / `F9`       | send SIGKILL to selected process              |
 | `?` / `F1`       | help                                          |
 
 Process CPU% is relative to one core, as in `top` and `htop`, so a process can

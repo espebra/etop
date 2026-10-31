@@ -36,7 +36,6 @@ impl SortBy {
 pub enum Mode {
     Normal,
     Filter,
-    ConfirmKill { pid: u32, name: String, force: bool },
     Help,
 }
 
@@ -97,9 +96,6 @@ impl App {
         let Some(snap) = self.sampler.latest() else {
             return;
         };
-        if let Some(msg) = &snap.message {
-            self.set_status(msg.clone());
-        }
         if self.paused {
             return;
         }
@@ -188,20 +184,6 @@ impl App {
     pub fn handle_key(&mut self, key: KeyEvent) {
         match self.mode.clone() {
             Mode::Filter => self.key_filter(key),
-            Mode::ConfirmKill { pid, force, .. } => {
-                match key.code {
-                    KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                        let cmd = if force {
-                            Command::Kill(pid)
-                        } else {
-                            Command::Terminate(pid)
-                        };
-                        self.sampler.send(cmd);
-                    }
-                    _ => {}
-                }
-                self.mode = Mode::Normal;
-            }
             Mode::Help => {
                 self.mode = Mode::Normal;
             }
@@ -271,20 +253,7 @@ impl App {
             }
             KeyCode::Char('+') | KeyCode::Char('=') => self.change_interval(-250),
             KeyCode::Char('-') | KeyCode::Char('_') => self.change_interval(250),
-
-            KeyCode::Char('x') | KeyCode::Delete => self.ask_kill(false),
-            KeyCode::Char('X') | KeyCode::F(9) => self.ask_kill(true),
             _ => {}
-        }
-    }
-
-    fn ask_kill(&mut self, force: bool) {
-        if let Some(p) = self.selected() {
-            self.mode = Mode::ConfirmKill {
-                pid: p.pid,
-                name: p.name.clone(),
-                force,
-            };
         }
     }
 
@@ -327,4 +296,461 @@ fn push<T>(hist: &mut VecDeque<T>, v: T) {
         hist.pop_front();
     }
     hist.push_back(v);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc::{Receiver, Sender};
+
+    fn proc(pid: u32, name: &str, user: &str, cpu: f32, mem: u64, run_time: u64) -> ProcInfo {
+        ProcInfo {
+            pid,
+            name: name.into(),
+            cmd: format!("/usr/bin/{name} --flag"),
+            user: user.into(),
+            cpu,
+            mem,
+            mem_pct: 0.0,
+            run_time,
+            status: "Sleeping".into(),
+            threads: 1,
+        }
+    }
+
+    fn procs() -> Vec<ProcInfo> {
+        vec![
+            proc(1, "init", "root", 0.5, 100, 9000),
+            proc(42, "nginx", "www", 12.0, 500, 300),
+            proc(7, "bash", "espen", 3.0, 200, 60),
+            proc(300, "Zed", "espen", 3.0, 900, 10),
+        ]
+    }
+
+    struct Harness {
+        app: App,
+        snaps: Sender<Snapshot>,
+        cmds: Receiver<Command>,
+    }
+
+    fn harness() -> Harness {
+        let (sampler, snaps, cmds) = Sampler::fake(StaticInfo::default());
+        let app = App::new(sampler, Duration::from_millis(2000));
+        Harness { app, snaps, cmds }
+    }
+
+    fn feed(h: &mut Harness, snap: Snapshot) {
+        h.snaps.send(snap).unwrap();
+        h.app.poll();
+    }
+
+    fn snap_with_procs() -> Snapshot {
+        Snapshot {
+            procs: procs(),
+            ..Default::default()
+        }
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn ctrl(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    fn visible_pids(app: &App) -> Vec<u32> {
+        app.visible.iter().map(|p| p.pid).collect()
+    }
+
+    #[test]
+    fn push_caps_history_length() {
+        let mut hist = VecDeque::new();
+        for i in 0..(HISTORY as u64 + 5) {
+            push(&mut hist, i);
+        }
+        assert_eq!(hist.len(), HISTORY);
+        assert_eq!(hist.front(), Some(&5));
+        assert_eq!(hist.back(), Some(&(HISTORY as u64 + 4)));
+    }
+
+    #[test]
+    fn poll_without_snapshot_is_noop() {
+        let mut h = harness();
+        h.app.poll();
+        assert!(h.app.cpu_hist.is_empty());
+        assert!(h.app.visible.is_empty());
+    }
+
+    #[test]
+    fn poll_folds_snapshot_into_history() {
+        let mut h = harness();
+        feed(
+            &mut h,
+            Snapshot {
+                cpu_total: 42.5,
+                cpu_cores: vec![10.0, 75.0],
+                mem_used: 1234,
+                rx_rate: 10,
+                tx_rate: 20,
+                ..Default::default()
+            },
+        );
+        assert_eq!(h.app.cpu_hist.back(), Some(&42.5));
+        assert_eq!(h.app.mem_hist.back(), Some(&1234));
+        assert_eq!(h.app.rx_hist.back(), Some(&10));
+        assert_eq!(h.app.tx_hist.back(), Some(&20));
+        assert_eq!(h.app.core_hist.len(), 2);
+        assert_eq!(h.app.core_hist[0].back(), Some(&10));
+        assert_eq!(h.app.core_hist[1].back(), Some(&75));
+        assert_eq!(h.app.snap.cpu_total, 42.5);
+    }
+
+    #[test]
+    fn poll_resets_core_history_when_core_count_changes() {
+        let mut h = harness();
+        feed(
+            &mut h,
+            Snapshot {
+                cpu_cores: vec![1.0, 2.0],
+                ..Default::default()
+            },
+        );
+        feed(
+            &mut h,
+            Snapshot {
+                cpu_cores: vec![1.0, 2.0, 3.0],
+                ..Default::default()
+            },
+        );
+        assert_eq!(h.app.core_hist.len(), 3);
+        assert!(h.app.core_hist.iter().all(|c| c.len() == 1));
+    }
+
+    #[test]
+    fn paused_app_drops_snapshots() {
+        let mut h = harness();
+        h.app.handle_key(key(KeyCode::Char(' ')));
+        assert!(h.app.paused);
+        assert_eq!(h.app.status_text(), Some("Paused"));
+
+        feed(&mut h, snap_with_procs());
+        assert!(h.app.cpu_hist.is_empty());
+        assert!(h.app.visible.is_empty());
+
+        h.app.handle_key(key(KeyCode::Char(' ')));
+        assert!(!h.app.paused);
+        assert_eq!(h.app.status_text(), Some("Resumed"));
+        feed(&mut h, snap_with_procs());
+        assert_eq!(h.app.visible.len(), 4);
+    }
+
+    #[test]
+    fn default_sort_is_cpu_descending_with_pid_tiebreak() {
+        let mut h = harness();
+        feed(&mut h, snap_with_procs());
+        // bash(7) and Zed(300) tie on CPU; descending order reverses the pid
+        // tiebreak too, so the higher pid comes first.
+        assert_eq!(visible_pids(&h.app), vec![42, 300, 7, 1]);
+        assert_eq!(h.app.table.selected(), Some(0));
+    }
+
+    #[test]
+    fn sort_keys_switch_column_and_toggle_direction() {
+        let mut h = harness();
+        feed(&mut h, snap_with_procs());
+
+        h.app.handle_key(key(KeyCode::Char('p')));
+        assert_eq!(h.app.sort, SortBy::Pid);
+        assert!(!h.app.sort_desc);
+        assert_eq!(visible_pids(&h.app), vec![1, 7, 42, 300]);
+
+        // Same key again flips the direction.
+        h.app.handle_key(key(KeyCode::Char('p')));
+        assert!(h.app.sort_desc);
+        assert_eq!(visible_pids(&h.app), vec![300, 42, 7, 1]);
+
+        h.app.handle_key(key(KeyCode::Char('m')));
+        assert_eq!(h.app.sort, SortBy::Mem);
+        assert!(h.app.sort_desc);
+        assert_eq!(visible_pids(&h.app), vec![300, 42, 7, 1]);
+
+        h.app.handle_key(key(KeyCode::Char('t')));
+        assert_eq!(visible_pids(&h.app), vec![1, 42, 7, 300]);
+
+        h.app.handle_key(key(KeyCode::Char('u')));
+        assert!(!h.app.sort_desc);
+        assert_eq!(visible_pids(&h.app), vec![7, 300, 1, 42]);
+
+        h.app.handle_key(key(KeyCode::Char('r')));
+        assert!(h.app.sort_desc);
+        assert_eq!(visible_pids(&h.app), vec![42, 1, 300, 7]);
+    }
+
+    #[test]
+    fn name_sort_is_case_insensitive() {
+        let mut h = harness();
+        feed(&mut h, snap_with_procs());
+        h.app.handle_key(key(KeyCode::Char('n')));
+        assert_eq!(visible_pids(&h.app), vec![7, 1, 42, 300]);
+    }
+
+    #[test]
+    fn filter_matches_name_cmd_user_and_pid() {
+        let mut h = harness();
+        feed(&mut h, snap_with_procs());
+
+        h.app.handle_key(key(KeyCode::Char('/')));
+        assert_eq!(h.app.mode, Mode::Filter);
+
+        for c in "NGI".chars() {
+            h.app.handle_key(key(KeyCode::Char(c)));
+        }
+        assert_eq!(h.app.filter, "NGI");
+        assert_eq!(visible_pids(&h.app), vec![42]);
+
+        h.app.handle_key(ctrl('u'));
+        assert!(h.app.filter.is_empty());
+        assert_eq!(h.app.visible.len(), 4);
+
+        for c in "espen".chars() {
+            h.app.handle_key(key(KeyCode::Char(c)));
+        }
+        assert_eq!(visible_pids(&h.app), vec![300, 7]);
+
+        h.app.handle_key(ctrl('u'));
+        for c in "300".chars() {
+            h.app.handle_key(key(KeyCode::Char(c)));
+        }
+        assert_eq!(visible_pids(&h.app), vec![300]);
+
+        h.app.handle_key(ctrl('u'));
+        for c in "--flag".chars() {
+            h.app.handle_key(key(KeyCode::Char(c)));
+        }
+        assert_eq!(h.app.visible.len(), 4);
+
+        h.app
+            .handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        assert!(h.app.visible.is_empty());
+        assert_eq!(h.app.table.selected(), None);
+
+        h.app.handle_key(key(KeyCode::Backspace));
+        assert_eq!(h.app.filter, "--flag");
+        assert_eq!(h.app.table.selected(), Some(0));
+    }
+
+    #[test]
+    fn filter_enter_keeps_filter_and_esc_clears_it() {
+        let mut h = harness();
+        feed(&mut h, snap_with_procs());
+
+        h.app.handle_key(key(KeyCode::Char('/')));
+        for c in "bash".chars() {
+            h.app.handle_key(key(KeyCode::Char(c)));
+        }
+        h.app.handle_key(key(KeyCode::Enter));
+        assert_eq!(h.app.mode, Mode::Normal);
+        assert_eq!(h.app.filter, "bash");
+        assert_eq!(visible_pids(&h.app), vec![7]);
+
+        h.app.handle_key(key(KeyCode::Char('/')));
+        h.app.handle_key(key(KeyCode::Esc));
+        assert_eq!(h.app.mode, Mode::Normal);
+        assert!(h.app.filter.is_empty());
+        assert_eq!(h.app.visible.len(), 4);
+    }
+
+    #[test]
+    fn filter_persists_across_snapshots() {
+        let mut h = harness();
+        feed(&mut h, snap_with_procs());
+        h.app.handle_key(key(KeyCode::Char('/')));
+        h.app.handle_key(key(KeyCode::Char('w')));
+        h.app.handle_key(key(KeyCode::Enter));
+        feed(&mut h, snap_with_procs());
+        assert_eq!(visible_pids(&h.app), vec![42]);
+    }
+
+    #[test]
+    fn cursor_moves_and_clamps() {
+        let mut h = harness();
+        feed(&mut h, snap_with_procs());
+
+        h.app.handle_key(key(KeyCode::Down));
+        assert_eq!(h.app.table.selected(), Some(1));
+        h.app.handle_key(key(KeyCode::Char('j')));
+        assert_eq!(h.app.table.selected(), Some(2));
+        h.app.handle_key(key(KeyCode::PageDown));
+        assert_eq!(h.app.table.selected(), Some(3));
+        h.app.handle_key(key(KeyCode::Char('k')));
+        assert_eq!(h.app.table.selected(), Some(2));
+        h.app.handle_key(key(KeyCode::PageUp));
+        assert_eq!(h.app.table.selected(), Some(0));
+        h.app.handle_key(key(KeyCode::Up));
+        assert_eq!(h.app.table.selected(), Some(0));
+        h.app.handle_key(key(KeyCode::Char('G')));
+        assert_eq!(h.app.table.selected(), Some(3));
+        h.app.handle_key(key(KeyCode::Char('g')));
+        assert_eq!(h.app.table.selected(), Some(0));
+        h.app.handle_key(ctrl('d'));
+        assert_eq!(h.app.table.selected(), Some(3));
+        h.app.handle_key(ctrl('u'));
+        assert_eq!(h.app.table.selected(), Some(0));
+    }
+
+    #[test]
+    fn cursor_with_no_rows_is_none() {
+        let mut h = harness();
+        h.app.handle_key(key(KeyCode::Down));
+        assert_eq!(h.app.table.selected(), None);
+        assert!(h.app.selected().is_none());
+    }
+
+    #[test]
+    fn selection_follows_process_when_rows_reorder() {
+        let mut h = harness();
+        feed(&mut h, snap_with_procs());
+        h.app.handle_key(key(KeyCode::Down));
+        assert_eq!(h.app.selected().map(|p| p.pid), Some(300));
+
+        // nginx drops, Zed rises: cursor should stay on Zed (pid 300).
+        let mut procs = procs();
+        procs[1].cpu = 0.1;
+        procs[3].cpu = 50.0;
+        feed(
+            &mut h,
+            Snapshot {
+                procs,
+                ..Default::default()
+            },
+        );
+        assert_eq!(visible_pids(&h.app)[0], 300);
+        assert_eq!(h.app.selected().map(|p| p.pid), Some(300));
+        assert_eq!(h.app.table.selected(), Some(0));
+    }
+
+    #[test]
+    fn selection_at_top_stays_at_top() {
+        let mut h = harness();
+        feed(&mut h, snap_with_procs());
+        assert_eq!(h.app.selected().map(|p| p.pid), Some(42));
+
+        let mut procs = procs();
+        procs[3].cpu = 50.0;
+        feed(
+            &mut h,
+            Snapshot {
+                procs,
+                ..Default::default()
+            },
+        );
+        assert_eq!(h.app.table.selected(), Some(0));
+        assert_eq!(h.app.selected().map(|p| p.pid), Some(300));
+    }
+
+    #[test]
+    fn selection_clamps_when_selected_process_disappears() {
+        let mut h = harness();
+        feed(&mut h, snap_with_procs());
+        h.app.handle_key(key(KeyCode::Char('G')));
+        assert_eq!(h.app.table.selected(), Some(3));
+
+        feed(
+            &mut h,
+            Snapshot {
+                procs: procs()[..2].to_vec(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(h.app.table.selected(), Some(1));
+        assert!(h.app.selected().is_some());
+    }
+
+    #[test]
+    fn change_interval_clamps_and_notifies_sampler() {
+        let mut h = harness();
+        h.app.handle_key(key(KeyCode::Char('+')));
+        assert_eq!(h.app.interval, Duration::from_millis(1750));
+        assert_eq!(h.app.status_text(), Some("Refresh interval: 1750 ms"));
+        assert!(matches!(
+            h.cmds.try_recv(),
+            Ok(Command::SetInterval(d)) if d == Duration::from_millis(1750)
+        ));
+
+        for _ in 0..20 {
+            h.app.handle_key(key(KeyCode::Char('=')));
+        }
+        assert_eq!(h.app.interval, Duration::from_millis(250));
+
+        for _ in 0..100 {
+            h.app.handle_key(key(KeyCode::Char('-')));
+        }
+        assert_eq!(h.app.interval, Duration::from_millis(10_000));
+    }
+
+    #[test]
+    fn quit_keys_set_should_quit() {
+        for k in [key(KeyCode::Char('q')), key(KeyCode::Esc), ctrl('c')] {
+            let mut h = harness();
+            h.app.handle_key(k);
+            assert!(h.app.should_quit, "{k:?}");
+        }
+    }
+
+    #[test]
+    fn help_mode_opens_and_any_key_closes() {
+        let mut h = harness();
+        h.app.handle_key(key(KeyCode::Char('?')));
+        assert_eq!(h.app.mode, Mode::Help);
+        h.app.handle_key(key(KeyCode::Char('q')));
+        assert_eq!(h.app.mode, Mode::Normal);
+        assert!(!h.app.should_quit);
+
+        h.app.handle_key(key(KeyCode::F(1)));
+        assert_eq!(h.app.mode, Mode::Help);
+    }
+
+    #[test]
+    fn toggles_flip_display_flags() {
+        let mut h = harness();
+        assert!(!h.app.show_cmd);
+        assert!(!h.app.show_ifaces);
+        h.app.handle_key(key(KeyCode::Char('e')));
+        h.app.handle_key(key(KeyCode::Char('i')));
+        assert!(h.app.show_cmd);
+        assert!(h.app.show_ifaces);
+        h.app.handle_key(key(KeyCode::Char('e')));
+        assert!(!h.app.show_cmd);
+    }
+
+    #[test]
+    fn shutdown_sends_stop() {
+        let h = harness();
+        h.app.shutdown();
+        assert!(matches!(h.cmds.try_recv(), Ok(Command::Stop)));
+    }
+
+    #[test]
+    fn status_text_expires() {
+        let mut h = harness();
+        assert_eq!(h.app.status_text(), None);
+        h.app.set_status("hi".into());
+        assert_eq!(h.app.status_text(), Some("hi"));
+        h.app.status = Some((
+            "old".into(),
+            std::time::Instant::now() - Duration::from_secs(5),
+        ));
+        assert_eq!(h.app.status_text(), None);
+    }
+
+    #[test]
+    fn sort_labels() {
+        assert_eq!(SortBy::Cpu.label(), "CPU");
+        assert_eq!(SortBy::Mem.label(), "MEM");
+        assert_eq!(SortBy::Pid.label(), "PID");
+        assert_eq!(SortBy::Name.label(), "NAME");
+        assert_eq!(SortBy::User.label(), "USER");
+        assert_eq!(SortBy::Time.label(), "TIME");
+    }
 }
