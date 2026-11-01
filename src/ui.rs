@@ -49,8 +49,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_header(frame, app, header);
 
     let [cpu, mem, right] = Layout::horizontal([
-        Constraint::Percentage(46),
-        Constraint::Percentage(24),
+        Constraint::Percentage(45),
+        Constraint::Percentage(25),
         Constraint::Percentage(30),
     ])
     .areas(top);
@@ -149,19 +149,19 @@ fn draw_cpu(frame: &mut Frame, app: &App, area: Rect) {
     // History chart: y-axis labels, axis line, then one bar per column with
     // the newest sample at the right edge.
     let [lbl_a, axis_a, bars_a] = Layout::horizontal([
-        Constraint::Length(3),
+        Constraint::Length(4),
         Constraint::Length(1),
         Constraint::Min(0),
     ])
     .areas(chart_area);
     let rows = chart_area.height as usize;
     let mut labels = vec![Line::default(); rows];
-    labels[rows - 1] = Line::from("  0".fg(DIM));
+    labels[rows - 1] = Line::from("  0%".fg(DIM));
     if rows >= 2 {
-        labels[0] = Line::from("100".fg(DIM));
+        labels[0] = Line::from("100%".fg(DIM));
     }
     if rows >= 3 {
-        labels[rows / 2] = Line::from(" 50".fg(DIM));
+        labels[rows / 2] = Line::from(" 50%".fg(DIM));
     }
     frame.render_widget(Paragraph::new(labels), lbl_a);
     frame.render_widget(Paragraph::new(vec![Line::from("│".fg(DIM)); rows]), axis_a);
@@ -172,9 +172,17 @@ fn draw_cpu(frame: &mut Frame, app: &App, area: Rect) {
     let values: Vec<Option<u64>> = std::iter::repeat_n(None, pad)
         .chain(hist.iter().skip(start).map(|v| Some(v.round() as u64)))
         .collect();
-    let lines: Vec<Line> = eighth_bars(&values, 100, width, rows)
+    // Each bar takes its own colour from its height.
+    let lines: Vec<Line> = eighth_bar_cells(&values, 100, width, rows)
         .into_iter()
-        .map(|l| Line::from(l.fg(heat(pct))))
+        .map(|row| {
+            let spans: Vec<Span> = row
+                .into_iter()
+                .zip(&values)
+                .map(|(ch, v)| ch.to_string().fg(heat(v.unwrap_or(0) as f64)))
+                .collect();
+            Line::from(spans)
+        })
         .collect();
     frame.render_widget(Paragraph::new(lines), bars_a);
 
@@ -234,8 +242,8 @@ fn draw_mem(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             "RAM ".fg(MEM).bold(),
-            format!("{} / {}", fmt_bytes(s.mem_used), fmt_bytes(total)).into(),
-            format!("  avail {}", fmt_bytes(s.mem_available)).fg(DIM),
+            format!("{}/{}", fmt_bytes(s.mem_used), fmt_bytes(total)).into(),
+            format!(" avail {}", fmt_bytes(s.mem_available)).fg(DIM),
         ])),
         ram_l,
     );
@@ -257,7 +265,7 @@ fn draw_mem(frame: &mut Frame, app: &App, area: Rect) {
         Paragraph::new(Line::from(vec![
             "Swap ".fg(SWAP).bold(),
             if s.swap_total > 0 {
-                format!("{} / {}", fmt_bytes(s.swap_used), fmt_bytes(s.swap_total)).into()
+                format!("{}/{}", fmt_bytes(s.swap_used), fmt_bytes(s.swap_total)).into()
             } else {
                 "none".fg(DIM)
             },
@@ -291,10 +299,10 @@ fn draw_net(frame: &mut Frame, app: &App, area: Rect) {
     let hint = if app.show_ifaces { "graphs" } else { "ifaces" };
     let b = block(Line::from(vec![
         " Network ".fg(ACCENT).bold(),
-        format!("↓ {}", fmt_rate(s.rx_rate)).fg(RX),
-        "  ".into(),
-        format!("↑ {}", fmt_rate(s.tx_rate)).fg(TX),
-        "  ".into(),
+        format!("↓{}", fmt_rate(s.rx_rate)).fg(RX),
+        " ".into(),
+        format!("↑{}", fmt_rate(s.tx_rate)).fg(TX),
+        " ".into(),
         format!("i:{hint}").fg(DIM),
         " ".into(),
     ]));
@@ -700,6 +708,15 @@ fn centered(area: Rect, w: u16, h: u16) -> Rect {
 /// string per text row, top row first. `None` and zero values leave the
 /// column blank; any other value is at least one eighth of a row tall.
 fn eighth_bars(values: &[Option<u64>], max: u64, cols: usize, rows: usize) -> Vec<String> {
+    eighth_bar_cells(values, max, cols, rows)
+        .into_iter()
+        .map(|row| row.into_iter().collect())
+        .collect()
+}
+
+/// Like [`eighth_bars`] but returns the individual cells so callers can
+/// style each column separately.
+fn eighth_bar_cells(values: &[Option<u64>], max: u64, cols: usize, rows: usize) -> Vec<Vec<char>> {
     const STEPS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
     let max_steps = rows * 8;
     let height = |i: usize| -> usize {

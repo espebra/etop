@@ -1,12 +1,12 @@
 use ratatui::style::Color;
 
-/// Format a byte count as a short human-readable string (e.g. `12.3G`).
+/// Format a byte count with decimal units and full suffixes (e.g. `12.3GB`).
 pub fn fmt_bytes(bytes: u64) -> String {
-    const UNITS: [&str; 6] = ["B", "K", "M", "G", "T", "P"];
+    const UNITS: [&str; 6] = ["B", "KB", "MB", "GB", "TB", "PB"];
     let mut value = bytes as f64;
     let mut unit = 0;
-    while value >= 1024.0 && unit < UNITS.len() - 1 {
-        value /= 1024.0;
+    while value >= 1000.0 && unit < UNITS.len() - 1 {
+        value /= 1000.0;
         unit += 1;
     }
     if unit == 0 {
@@ -18,9 +18,24 @@ pub fn fmt_bytes(bytes: u64) -> String {
     }
 }
 
-/// Format a bytes-per-second rate (e.g. `1.2M/s`).
+/// Format a bytes-per-second rate as bits per second with decimal units,
+/// following networking convention (e.g. `1.2Mbps`).
 pub fn fmt_rate(bytes_per_sec: u64) -> String {
-    format!("{}/s", fmt_bytes(bytes_per_sec))
+    const UNITS: [&str; 6] = ["bps", "Kbps", "Mbps", "Gbps", "Tbps", "Pbps"];
+    let bits = bytes_per_sec.saturating_mul(8);
+    let mut value = bits as f64;
+    let mut unit = 0;
+    while value >= 1000.0 && unit < UNITS.len() - 1 {
+        value /= 1000.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bits}{}", UNITS[unit])
+    } else if value >= 100.0 {
+        format!("{value:.0}{}", UNITS[unit])
+    } else {
+        format!("{value:.1}{}", UNITS[unit])
+    }
 }
 
 /// Format seconds as `hh:mm:ss`, or `Nd hh:mm` once it exceeds a day.
@@ -118,19 +133,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fmt_bytes_picks_unit_and_precision() {
+    fn fmt_bytes_uses_thousands_and_full_suffixes() {
         assert_eq!(fmt_bytes(0), "0B");
-        assert_eq!(fmt_bytes(1023), "1023B");
-        assert_eq!(fmt_bytes(1024), "1.0K");
-        assert_eq!(fmt_bytes(1536), "1.5K");
-        assert_eq!(fmt_bytes(100 * 1024), "100K");
-        assert_eq!(fmt_bytes(12_300_000_000), "11.5G");
-        assert_eq!(fmt_bytes(u64::MAX), "16384P");
+        assert_eq!(fmt_bytes(999), "999B");
+        assert_eq!(fmt_bytes(1000), "1.0KB");
+        assert_eq!(fmt_bytes(1536), "1.5KB");
+        assert_eq!(fmt_bytes(100_000), "100KB");
+        assert_eq!(fmt_bytes(12_300_000_000), "12.3GB");
+        assert_eq!(fmt_bytes(994_000_000_000), "994GB");
+        assert_eq!(fmt_bytes(2_000_000_000_000), "2.0TB");
+        assert_eq!(fmt_bytes(u64::MAX), "18447PB");
     }
 
     #[test]
-    fn fmt_rate_appends_per_second() {
-        assert_eq!(fmt_rate(2048), "2.0K/s");
+    fn fmt_rate_converts_bytes_to_decimal_bits() {
+        assert_eq!(fmt_rate(0), "0bps");
+        assert_eq!(fmt_rate(100), "800bps");
+        assert_eq!(fmt_rate(125), "1.0Kbps");
+        assert_eq!(fmt_rate(2048), "16.4Kbps");
+        assert_eq!(fmt_rate(12_500), "100Kbps");
+        assert_eq!(fmt_rate(125_000_000), "1.0Gbps");
+        assert_eq!(fmt_rate(119_209_289), "954Mbps");
+        assert_eq!(fmt_rate(1_250_000_000_000), "10.0Tbps");
+        assert_eq!(fmt_rate(u64::MAX), "18447Pbps");
     }
 
     #[test]
