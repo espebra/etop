@@ -5,7 +5,7 @@ mod sys;
 mod ui;
 mod util;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
 
@@ -18,7 +18,8 @@ USAGE:
     etop [OPTIONS]
 
 OPTIONS:
-    -r, --rate <MS>    Refresh interval in milliseconds (default 2000, min 250)
+    -r, --rate <MS>    Refresh interval in milliseconds (default 2000, min 250),
+                       aligned to the wall clock
     -h, --help         Print this help
     -V, --version      Print version
 ";
@@ -73,13 +74,24 @@ fn main() {
 }
 
 fn run(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> std::io::Result<()> {
+    // When the sampler is next expected to produce a snapshot. It wakes on
+    // wall-clock multiples of the interval, so the screen is redrawn at the
+    // same moment in every etop window.
+    let mut next_tick = Instant::now() + sys::until_next_tick(app.interval);
     loop {
-        app.poll();
+        let now = Instant::now();
+        if app.poll() || now > next_tick + app.interval {
+            next_tick = now + sys::until_next_tick(app.interval);
+        }
         terminal.draw(|frame| ui::draw(frame, app))?;
 
-        // Wake up at least ten times a second so new samples and status
-        // timeouts are reflected promptly, without burning CPU.
-        if event::poll(Duration::from_millis(100))? {
+        // Wake up at least ten times a second so status timeouts are
+        // reflected promptly, without burning CPU. Once a tick is due, poll
+        // briefly so the new snapshot is shown as soon as it is ready.
+        let timeout = next_tick
+            .saturating_duration_since(Instant::now())
+            .clamp(Duration::from_millis(5), Duration::from_millis(100));
+        if event::poll(timeout)? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => app.handle_key(key),
                 _ => {}

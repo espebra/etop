@@ -92,12 +92,13 @@ impl App {
     }
 
     /// Pull any new snapshot from the sampler and fold it into history.
-    pub fn poll(&mut self) {
+    /// Returns whether a snapshot arrived (even if dropped while paused).
+    pub fn poll(&mut self) -> bool {
         let Some(snap) = self.sampler.latest() else {
-            return;
+            return false;
         };
         if self.paused {
-            return;
+            return true;
         }
         push(&mut self.cpu_hist, snap.cpu_total as f64);
         push(&mut self.mem_hist, snap.mem_used);
@@ -115,6 +116,7 @@ impl App {
         }
         self.snap = snap;
         self.rebuild_visible();
+        true
     }
 
     pub fn set_status(&mut self, msg: String) {

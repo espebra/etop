@@ -4,10 +4,11 @@
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use sysinfo::{
-    Disks, Networks, ProcessRefreshKind, ProcessesToUpdate, System, Uid, UpdateKind, Users,
+    Disks, MINIMUM_CPU_UPDATE_INTERVAL, Networks, ProcessRefreshKind, ProcessesToUpdate, System,
+    Uid, UpdateKind, Users,
 };
 
 /// Static facts about the machine, gathered once at startup.
@@ -296,11 +297,27 @@ fn run(mut sys: System, mut interval: Duration, out: Sender<Snapshot>, cmds: Rec
             return;
         }
 
-        let spent = started.elapsed();
-        if spent < interval {
-            thread::sleep(interval - spent);
+        // Sleep until the next wall-clock multiple of the interval, so that
+        // several instances with the same interval refresh in lockstep. If
+        // that boundary is too close for a meaningful CPU delta, skip to the
+        // one after it.
+        let mut wait = until_next_tick(interval);
+        if wait < MINIMUM_CPU_UPDATE_INTERVAL {
+            wait += interval;
         }
+        thread::sleep(wait);
     }
+}
+
+/// Time left until the wall clock reaches the next multiple of `interval`
+/// (counted from the Unix epoch). Always in `(0, interval]`.
+pub fn until_next_tick(interval: Duration) -> Duration {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let step = interval.as_nanos().max(1);
+    Duration::from_nanos((step - now % step) as u64)
 }
 
 fn collect_disks(disks: &Disks) -> Vec<DiskInfo> {
@@ -355,6 +372,15 @@ impl Sampler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn until_next_tick_is_within_one_interval() {
+        for ms in [250, 1000, 2000, 1750] {
+            let iv = Duration::from_millis(ms);
+            let wait = until_next_tick(iv);
+            assert!(wait > Duration::ZERO && wait <= iv, "{wait:?} for {iv:?}");
+        }
+    }
 
     #[test]
     fn latest_returns_newest_and_drains_queue() {
