@@ -86,10 +86,12 @@ fn run(terminal: &mut ratatui::DefaultTerminal, app: &mut App) -> std::io::Resul
         terminal.draw(|frame| ui::draw(frame, app))?;
 
         // Wake up at least ten times a second so status timeouts are
-        // reflected promptly, without burning CPU. Once a tick is due, poll
+        // reflected promptly, without burning CPU, and on each wall-clock
+        // second so the clock ticks on time. Once a tick is due, poll
         // briefly so the new snapshot is shown as soon as it is ready.
         let timeout = next_tick
             .saturating_duration_since(Instant::now())
+            .min(sys::until_next_tick(Duration::from_secs(1)))
             .clamp(Duration::from_millis(5), Duration::from_millis(100));
         if event::poll(timeout)? {
             match event::read()? {

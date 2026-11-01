@@ -95,6 +95,12 @@ fn draw_header(frame: &mut Frame, app: &App, area: Rect) {
         spans.push(" PAUSED ".bold().fg(Color::Black).bg(Color::Yellow));
     }
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
+
+    let clock = jiff::Zoned::now().strftime("%H:%M:%S ").to_string();
+    frame.render_widget(
+        Paragraph::new(clock.bold()).alignment(Alignment::Right),
+        area,
+    );
 }
 
 fn draw_cpu(frame: &mut Frame, app: &App, area: Rect) {

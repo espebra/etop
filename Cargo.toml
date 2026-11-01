@@ -12,6 +12,7 @@ keywords = ["top", "htop", "monitor", "tui", "system"]
 categories = ["command-line-utilities"]
 
 [dependencies]
+jiff = "0.2.38"
 ratatui = "0.30"
 sysinfo = "0.40"
 
