@@ -84,6 +84,37 @@ builds static Linux binaries (amd64, arm64) and macOS binaries (x86_64, arm64),
 and produces `.deb` and `.rpm` packages for both Linux architectures. Pushing a
 `v*` tag attaches all of them, plus a `SHA256SUMS` file, to a GitHub release.
 
+### Making a release
+
+The package and binary versions come from `Cargo.toml`, not from the git tag,
+so bump the version before tagging:
+
+1. Set `version` in `Cargo.toml` to the new version, e.g. `0.2.2`.
+2. Update the lockfile to match (CI builds with `--locked`):
+
+   ```sh
+   cargo update -p etop
+   ```
+
+3. Check that the binary reports the new version:
+
+   ```sh
+   cargo build --release --locked
+   ./target/release/etop --version
+   ```
+
+4. Commit, tag the bump commit, and push both:
+
+   ```sh
+   git commit -am "Bump version to 0.2.2"
+   git tag -a v0.2.2 -m "v0.2.2"
+   git push origin main v0.2.2
+   ```
+
+5. Wait for the `build` workflow on the tag to finish (`gh run watch`). It
+   creates the GitHub release with generated release notes and attaches the
+   binaries, packages and checksums.
+
 To build the packages locally on Linux:
 
 ```sh
