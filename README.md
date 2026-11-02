@@ -15,7 +15,7 @@ Supports Linux and macOS on x86_64 and arm64.
 - Memory and swap gauges with a used-memory history sparkline
 - Network receive / transmit sparklines with peak and total counters, or a
   per-interface table of current rates and totals (toggle with `i`)
-- Disk usage gauges per mounted filesystem
+- Disk usage gauges and read/write rates per mounted filesystem
 - Process table with CPU, memory, RSS, thread count (Linux), run time and state
 - Sort by CPU, memory, PID, name, user or run time; reverse any sort
 - Incremental filter over name, command line, user or PID

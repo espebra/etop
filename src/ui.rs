@@ -8,6 +8,7 @@ use ratatui::widgets::{
 };
 
 use crate::app::{App, Mode, SortBy};
+use crate::sys::DiskInfo;
 use crate::util::{bar, ellipsize, fmt_bytes, fmt_duration, fmt_rate, heat, status_code};
 
 const ACCENT: Color = Color::Rgb(120, 170, 255);
@@ -443,6 +444,17 @@ fn draw_disks(frame: &mut Frame, app: &App, area: Rect) {
     let per: u16 = if two_rows { 2 } else { 1 };
     let rows =
         Layout::vertical(vec![Constraint::Length(per); (inner.height / per) as usize]).split(inner);
+    // IO rates sit right-aligned on the label row in a fixed-width column
+    // ("r 999MB/s w 999MB/s" plus a gap) so the layout doesn't shift as the
+    // rates change. Shown for all disks or none, and only if every mount
+    // point keeps a few columns.
+    const RATE_W: usize = 7;
+    const IO_W: usize = 2 * RATE_W + 6;
+    let usage = |d: &DiskInfo| format!(" {} / {}", fmt_bytes(d.used), fmt_bytes(d.total));
+    let show_io = two_rows
+        && s.disks.iter().all(|d| {
+            usage(d).len() + d.mount.chars().count().min(4) + IO_W <= inner.width as usize
+        });
     for (d, rect) in s.disks.iter().zip(rows.iter()) {
         let ratio = if d.total > 0 {
             d.used as f64 / d.total as f64
@@ -459,17 +471,36 @@ fn draw_disks(frame: &mut Frame, app: &App, area: Rect) {
         if two_rows {
             let [lbl, bar] =
                 Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(*rect);
-            let mount_w = rect.width.saturating_sub(24) as usize;
+            let usage = usage(d);
+            let mut label_area = lbl;
+            if show_io {
+                let [left, right] =
+                    Layout::horizontal([Constraint::Min(0), Constraint::Length(IO_W as u16)])
+                        .areas(lbl);
+                label_area = left;
+                let rate = |v: u64, c: Color| {
+                    format!("{}/s", fmt_bytes(v)).fg(if v > 0 { c } else { DIM })
+                };
+                frame.render_widget(
+                    Paragraph::new(Line::from(vec![
+                        "r ".fg(DIM),
+                        rate(d.read_rate, RX),
+                        " w ".fg(DIM),
+                        rate(d.write_rate, TX),
+                    ]))
+                    .alignment(Alignment::Right),
+                    right,
+                );
+            }
+            let mount_w = (label_area.width as usize).saturating_sub(usage.len());
             frame.render_widget(
                 Paragraph::new(Line::from(vec![
                     ellipsize(&d.mount, mount_w.max(4)).bold(),
-                    " ".into(),
-                    format!("{} / {}", fmt_bytes(d.used), fmt_bytes(d.total)).fg(DIM),
-                    format!("  {pct:.0}%").fg(heat(pct)),
+                    usage.fg(DIM),
                 ])),
-                lbl,
+                label_area,
             );
-            frame.render_widget(gauge.label(""), bar);
+            frame.render_widget(gauge.label(format!("{pct:>3.0}% ").fg(heat(pct))), bar);
         } else {
             let label = Line::from(vec![
                 format!("{:<10}", ellipsize(&d.mount, 10)).into(),
