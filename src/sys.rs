@@ -51,6 +51,8 @@ pub struct DiskInfo {
     pub mount: String,
     pub total: u64,
     pub used: u64,
+    pub read_rate: u64,
+    pub write_rate: u64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -207,7 +209,7 @@ fn run(mut sys: System, mut interval: Duration, out: Sender<Snapshot>, cmds: Rec
         let disk_list = match disks.as_mut() {
             Some(d) => {
                 d.refresh(true);
-                collect_disks(d)
+                collect_disks(d, elapsed)
             }
             None => Vec::new(),
         };
@@ -320,7 +322,7 @@ pub fn until_next_tick(interval: Duration) -> Duration {
     Duration::from_nanos((step - now % step) as u64)
 }
 
-fn collect_disks(disks: &Disks) -> Vec<DiskInfo> {
+fn collect_disks(disks: &Disks, elapsed: f64) -> Vec<DiskInfo> {
     let mut out: Vec<DiskInfo> = Vec::new();
     for d in disks {
         let total = d.total_space();
@@ -341,11 +343,14 @@ fn collect_disks(disks: &Disks) -> Vec<DiskInfo> {
         if out.iter().any(|o| o.name == name && o.total == total) {
             continue;
         }
+        let io = d.usage();
         out.push(DiskInfo {
             name,
             mount,
             total,
             used: total.saturating_sub(d.available_space()),
+            read_rate: (io.read_bytes as f64 / elapsed) as u64,
+            write_rate: (io.written_bytes as f64 / elapsed) as u64,
         });
     }
     out.sort_by(|a, b| a.mount.cmp(&b.mount));
