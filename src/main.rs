@@ -5,6 +5,7 @@ mod sys;
 mod ui;
 mod util;
 
+use std::io::IsTerminal;
 use std::time::{Duration, Instant};
 
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
@@ -52,6 +53,13 @@ fn main() {
                 std::process::exit(2);
             }
         }
+    }
+
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        eprintln!(
+            "error: etop must be run in a terminal (when running over ssh, use 'ssh -t <host> etop')"
+        );
+        std::process::exit(1);
     }
 
     let sampler = match Sampler::spawn(interval) {
